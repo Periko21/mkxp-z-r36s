@@ -1,0 +1,40 @@
+{
+    // -----------------------------------------------------------------------
+    // Ajustes de mkxp-z para R36S / ArkOS (Rockchip RK3326, Mali-G31).
+    // -----------------------------------------------------------------------
+
+    // TEXTO CORTADO ---------------------------------------------------------
+    // Por defecto mkxp-z imita a RGSS y reporta la altura "nominal" de la
+    // fuente; su propia documentacion advierte que eso "puede cortar la parte
+    // inferior de algunos caracteres". El modo 1 usa la altura real.
+    "fontHeightReporting": 1,
+
+    // RGSS recorta la fila superior y la columna izquierda del texto con
+    // contorno. Desactivarlo, segun el motor, "generalmente se ve mejor".
+    "fontOutlineCrop": false,
+
+    // ¿IMAGEN CONGELADA O CAMARA LENTA? --------------------------------------
+    // Esta es LA opcion que decide que sintoma tienes cuando la consola no da
+    // los 40 fps que pide RPG Maker XP. No arregla la lentitud: elige como se
+    // manifiesta. Prueba las dos y quedate con la que menos te moleste.
+    //
+    //   true  = el motor deja de DIBUJAR fotogramas para no retrasar la
+    //           logica. El juego avanza a velocidad correcta, pero en las
+    //           zonas pesadas la imagen se convierte en diapositivas: es lo
+    //           que te obligaba a andar a ciegas.
+    //
+    //   false = dibuja todos los fotogramas. Ves todo lo que pasa, pero el
+    //           juego entero (personaje incluido) va a camara lenta.
+    //
+    // Cambia solo esta linea: pon true o false y guarda. No hace falta nada mas.
+    "frameSkip": false,
+
+    // DIAGNOSTICO -----------------------------------------------------------
+    // Escribe los fps medios en mkxp-log.txt una vez por segundo. Una linea por
+    // segundo no afecta al rendimiento y permite medir en vez de suponer.
+    "printFPS": true,
+
+    // Escalado por vecino mas cercano (el mas barato). Cualquier filtrado seria
+    // coste de GPU sin ganancia visible a esta resolucion.
+    "smoothScaling": 0
+}

@@ -23,6 +23,11 @@ based RPG Maker XP game:
 | Audio | ALSA via OpenAL Soft |
 | Input | Gamepad, Nintendo-style face buttons |
 | Exit | `SELECT` + `START` returns to the ArkOS frontend |
+| Speed | 40 fps (RPG Maker XP's target) at roughly half of one CPU core |
+
+If your game does *not* hold 40 fps, read
+[Performance](#performance-when-the-game-crawls-it-is-usually-not-the-engine)
+before assuming the port is at fault — on this hardware it usually isn't.
 
 ---
 
@@ -36,10 +41,19 @@ based RPG Maker XP game:
    `Game.ini`, …) inside `/roms/ports/mkxp/`.
 5. The port appears in the Ports menu.
 
-If something goes wrong, create an empty file called `debug.txt` inside
-`/roms/ports/mkxp/` and run it again: the launcher then writes verbose SDL
-diagnostics into `mkxp-log.txt`. Leave it off for normal play — the log is
-written to the SD card and, at one line per frame, is itself a slowdown.
+### Diagnostics
+
+Create an empty file called `debug.txt` inside `/roms/ports/mkxp/` and the
+launcher will, for that run:
+
+- write verbose SDL diagnostics into `mkxp-log.txt`, and
+- sample temperature, CPU frequency, CPU usage and free memory every 5 seconds
+  into `perf-log.txt`.
+
+Delete it for normal play: the verbose SDL log is one line per frame written to
+the SD card, which is itself a slowdown. `mkxp.json` leaves `printFPS` on
+regardless — one line per second is free, and it is what makes it possible to
+measure a performance complaint instead of guessing at it.
 
 ---
 
@@ -51,6 +65,70 @@ you already own or have obtained yourself.
 Do not redistribute Pokémon fan games or any other copyrighted RPG Maker content
 with this port. The engine is free software; the games generally are not, and
 fan games in particular tend to contain third-party intellectual property.
+
+---
+
+## Performance: when the game crawls, it is usually not the engine
+
+The port held 40 fps in most places but collapsed to 8 fps in specific areas,
+badly enough to be unplayable. Chasing that produced the single most useful
+finding in this whole project, so it is written up in full — the method
+transfers to any game.
+
+### What the numbers said
+
+`printFPS` plus the `debug.txt` sampler gave a minute-by-minute picture, and it
+ruled out three obvious suspects outright:
+
+| Suspect | Measurement | Verdict |
+|---|---|---|
+| Thermal throttling | 1512 MHz in **all 75 samples**, never once lower, at up to 74 °C | Not it |
+| Running out of RAM | 371 MB still free at worst, **0 bytes** of swap touched | Not it |
+| CPU governor asleep | `governor=performance`, already applied by the launcher | Not it |
+
+What it *was*:
+
+| | fps | CPU |
+|---|---|---|
+| Normal area | 40 | **54%** of one core |
+| Slow area | 8–19 | **112%** of one core |
+
+112% out of a possible 400%. One core pinned, three idle. RPG Maker runs game
+logic in a single Ruby thread by design, so the other three cores cannot help
+and no engine setting changes that.
+
+### What actually fixed it
+
+Pokémon Essentials **v19** does not use RPG Maker's native map drawing — it
+ships its own tilemap renderer written in Ruby. Animated tiles, water above
+all, are recomputed in Ruby every frame. That is why the slowdown was tied to
+specific areas rather than to time, and why it saturated exactly one core.
+
+Fire Ash's own changelog turns out to name the problem:
+
+> *"Improved the game's graphics renderer to reduce lag near water"*
+> *"Added the option to reduce the speed of tile animations to reduce lag"* — v3.7
+
+**Setting tile animation speed to slow, in the game's own options menu, fixed
+it completely.** No engine change, no rebuild.
+
+### If your game has no such option
+
+Two dials in `mkxp.json` change *which symptom* you get when the hardware cannot
+sustain 40 fps. Neither makes the game faster:
+
+- `"frameSkip": true` — the engine stops **drawing** frames to keep the game
+  logic at the correct speed. Timing stays right, but in heavy areas the picture
+  becomes a slideshow and you end up walking blind.
+- `"frameSkip": false` — every frame is drawn, so you see everything, but the
+  whole game runs in slow motion.
+
+This port ships `false`. Try both and keep the one that bothers you less.
+
+Beyond that, the honest answer is that the bottleneck is the game's Ruby code.
+Rebuilding the engine tuned for the exact core (`-mcpu=cortex-a35` instead of
+the generic ARMv7 profile used here) would be worth maybe 10–20%, which does not
+close a 5× gap.
 
 ---
 
@@ -136,7 +214,8 @@ rejection.
 **Fix** (`patches/0001-…`): if an async flip is rejected, retry it synchronously
 and stop requesting async. One rejected ioctl per session instead of one per
 frame. This is not specific to this game or this engine — it should help any
-SDL2 KMS/DRM application on these handhelds.
+SDL2 KMS/DRM application on these handhelds. Reported upstream as
+[libsdl-org/SDL#16174](https://github.com/libsdl-org/SDL/issues/16174).
 
 ### 6. Text with the bottoms of characters cut off
 
@@ -152,14 +231,16 @@ reporting a *nominal* font height; its own source says so:
 **Fix:** `"fontHeightReporting": 1` and `"fontOutlineCrop": false` in
 `build/mkxp.json`.
 
-### 7. The whole game running in slow motion
+### 7. Slow motion, or a frozen picture — pick one
 
-mkxp-z ships with `frameSkip` **disabled**. When the hardware cannot sustain the
-40 fps RPG Maker XP asks for, the engine does not drop frames — it delays the
-game *logic*. Menus did not merely look choppy, they genuinely ran slow.
+When the hardware cannot sustain RPG Maker XP's 40 fps, `frameSkip` decides
+which way it degrades, and it is easy to mistake one symptom for a separate bug.
+With it off the game runs in slow motion; with it on the logic keeps correct
+speed but heavy areas turn into a slideshow you cannot navigate.
 
-**Fix:** `"frameSkip": true`. `"printFPS": true` is also enabled so the log
-carries real numbers instead of impressions.
+It is a choice of symptom, not a fix. The underlying cause is almost always the
+game rather than the engine — see
+[Performance](#performance-when-the-game-crawls-it-is-usually-not-the-engine).
 
 ### 8. No way to quit without resetting the console
 
