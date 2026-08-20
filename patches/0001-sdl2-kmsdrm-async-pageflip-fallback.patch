@@ -1,0 +1,30 @@
+diff --git a/src/video/kmsdrm/SDL_kmsdrmopengles.c b/src/video/kmsdrm/SDL_kmsdrmopengles.c
+index 8dc2bfdc6..512fbb7bc 100644
+--- a/src/video/kmsdrm/SDL_kmsdrmopengles.c
++++ b/src/video/kmsdrm/SDL_kmsdrmopengles.c
+@@ -173,6 +173,25 @@ int KMSDRM_GLES_SwapWindow(_THIS, SDL_Window *window)
+         ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc->crtc_id,
+                                      fb_info->fb_id, flip_flags, &windata->waiting_for_flip);
+ 
++        /* Some drivers advertise DRM_CAP_ASYNC_PAGE_FLIP but then reject every
++           async flip with -EINVAL (Rockchip's, as used by RK3326 handhelds,
++           is one). Without this fallback the flip fails on every single frame,
++           so nothing the game draws is ever scanned out properly.
++           Retry synchronously and stop requesting async from now on, making
++           this cost one rejected ioctl per session rather than one per frame.
++           A synchronous flip is safe at this point: SwapWindow already waited
++           for any previous flip to complete, so the CRTC cannot be busy. */
++        if (ret && (flip_flags & DRM_MODE_PAGE_FLIP_ASYNC)) {
++            viddata->async_pageflip_support = SDL_FALSE;
++            flip_flags &= ~DRM_MODE_PAGE_FLIP_ASYNC;
++            ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc->crtc_id,
++                                         fb_info->fb_id, flip_flags, &windata->waiting_for_flip);
++            if (ret == 0) {
++                SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
++                    "Async pageflip rejected by the driver; using synchronous flips.");
++            }
++        }
++
+         if (ret == 0) {
+             windata->waiting_for_flip = SDL_TRUE;
+         } else {

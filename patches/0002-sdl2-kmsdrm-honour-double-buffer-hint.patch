@@ -1,0 +1,17 @@
+diff --git a/src/video/kmsdrm/SDL_kmsdrmvideo.c b/src/video/kmsdrm/SDL_kmsdrmvideo.c
+index ebe15fe9c..94a7a69d0 100644
+--- a/src/video/kmsdrm/SDL_kmsdrmvideo.c
++++ b/src/video/kmsdrm/SDL_kmsdrmvideo.c
+@@ -1415,6 +1415,12 @@ int KMSDRM_CreateWindow(_THIS, SDL_Window *window)
+     windata->viddata = viddata;
+     window->driverdata = windata;
+ 
++    /* Waiting for the flip immediately after queueing it costs some throughput
++       but removes a frame of input latency, which matters much more on a
++       handheld running a 2D game. Nothing else in this driver sets the flag,
++       so read the documented hint here. */
++    windata->double_buffer = SDL_GetHintBoolean(SDL_HINT_VIDEO_DOUBLE_BUFFER, SDL_FALSE);
++
+     if (!is_vulkan && !vulkan_mode) { /* NON-Vulkan block. */
+ 
+         /* Maybe you didn't ask for an OPENGL window, but that's what you will get.

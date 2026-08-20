@@ -1,0 +1,16 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 6e09d71..17a5e50 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -225,6 +225,11 @@ int main(int argc, char *argv[]) {
+ 
+     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+ 
++    /* Opt-in verbose logging, enabled by the launcher script, so that video
++     * and audio init failures on the handheld are diagnosable from its log. */
++    if (SDL_getenv("MKXPZ_SDL_DEBUG"))
++      SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
++
+     /* initialize SDL first */
+     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER) < 0) {
+       showInitError(std::string("Error initializing SDL: ") + SDL_GetError());

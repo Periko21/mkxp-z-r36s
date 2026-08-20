@@ -1,0 +1,36 @@
+{
+    // -----------------------------------------------------------------------
+    // Ajustes de mkxp-z para R36S / ArkOS (Rockchip RK3326, Mali-G31).
+    // Los valores comentados con "por defecto" quedan como los trae el motor.
+    // -----------------------------------------------------------------------
+
+    // TEXTO CORTADO ---------------------------------------------------------
+    // Por defecto mkxp-z imita a RGSS y reporta la altura "nominal" de la
+    // fuente. La documentacion del propio motor advierte que eso "puede cortar
+    // la parte inferior de algunos caracteres", que es justo lo que se veia.
+    // El modo 1 usa la altura realmente ocupada por el texto renderizado.
+    "fontHeightReporting": 1,
+
+    // RGSS recorta la fila superior y la columna izquierda del texto con
+    // contorno. Es fiel al original pero se come parte de las letras; el motor
+    // documenta que desactivarlo "generalmente se ve mejor".
+    "fontOutlineCrop": false,
+
+    // RENDIMIENTO -----------------------------------------------------------
+    // Clave en hardware modesto: cuando el motor no llega a tiempo, permite
+    // saltarse el DIBUJO de algun fotograma en vez de retrasar la LOGICA del
+    // juego. Sin esto, si la consola no da los 40 fps que pide RPG Maker XP,
+    // el juego entero (menus incluidos) se ejecuta a camara lenta en lugar de
+    // perder fluidez visual.
+    "frameSkip": true,
+
+    // Escribe los fps medios en mkxp-log.txt una vez por segundo. Es una linea
+    // por segundo -- irrelevante para el rendimiento -- y permite medir de
+    // verdad si el juego va lento en vez de suponerlo.
+    "printFPS": true,
+
+    // Escalado por vecino mas cercano (valor por defecto, y el mas barato):
+    // el juego es de 640x480 o menos y la pantalla tambien, asi que cualquier
+    // filtrado seria coste de GPU sin ganancia visible.
+    "smoothScaling": 0
+}

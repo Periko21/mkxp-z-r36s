@@ -1,0 +1,19 @@
+diff --git a/src/input/keybindings.cpp b/src/input/keybindings.cpp
+index e62076a..f4d693f 100644
+--- a/src/input/keybindings.cpp
++++ b/src/input/keybindings.cpp
+@@ -105,8 +105,12 @@ static elementsN(defaultKbBindings2);
+ static const CtrlBindingData defaultCtrlBindings[] =
+ {
+ 	{ SDL_CONTROLLER_BUTTON_X, Input::A  },
+-	{ SDL_CONTROLLER_BUTTON_B, Input::B  },
+-	{ SDL_CONTROLLER_BUTTON_A, Input::C },
++	/* Nintendo-style face buttons for handhelds: the RIGHT button confirms and
++	 * the BOTTOM one cancels / opens the menu. mkxp-z's PC default is the other
++	 * way round, which on a console whose every other emulator follows the
++	 * Game Boy convention means confirm and cancel feel swapped. */
++	{ SDL_CONTROLLER_BUTTON_B, Input::C  },
++	{ SDL_CONTROLLER_BUTTON_A, Input::B  },
+ 	{ SDL_CONTROLLER_BUTTON_Y, Input::X  },
+ 	{ SDL_CONTROLLER_BUTTON_LEFTSTICK, Input::Y  },
+ 	{ SDL_CONTROLLER_BUTTON_RIGHTSTICK, Input::Z },

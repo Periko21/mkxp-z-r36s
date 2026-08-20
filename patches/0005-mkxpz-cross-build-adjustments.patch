@@ -1,0 +1,463 @@
+diff --git a/linux/Makefile b/linux/Makefile
+index 8fecca6..bafc3a2 100644
+--- a/linux/Makefile
++++ b/linux/Makefile
+@@ -6,7 +6,7 @@ ARCH_CONFIGURE ?= $(shell gcc -dumpmachine)
+ SDL_FLAGS := ${SDL_FLAGS}
+ SDL2_IMAGE_FLAGS := ${SDL2_IMAGE_FLAGS}
+ SDL2_TTF_FLAGS := ${SDL2_TTF_FLAGS}
+-OPENAL_FLAGS := -DALSOFT_CPUEXT_NEON=no ${OPENAL_FLAGS}
++OPENAL_FLAGS := -DALSOFT_CPUEXT_NEON=no -DALSOFT_BACKEND_ALSA=ON -DALSOFT_REQUIRE_ALSA=ON ${OPENAL_FLAGS}
+ OPENSSL_FLAGS := $(ARCH_OPENSSL) ${OPENSSL_FLAGS}
+ RUBY_FLAGS := ${RUBY_FLAGS}
+ 
+@@ -194,10 +194,13 @@ $(LIBDIR)/libSDL2.a: $(DOWNLOADS)/sdl2/cmakebuild/Makefile
+ 	cd $(DOWNLOADS)/sdl2/cmakebuild; \
+ 	make -j$(NPROC); make install
+ 
+-$(DOWNLOADS)/sdl2/cmakebuild/Makefile: $(DOWNLOADS)/sdl2/CMakeLists.txt $(LIBDIR)/libdbus-1.so.3.38.3
++$(DOWNLOADS)/sdl2/cmakebuild/Makefile: $(DOWNLOADS)/sdl2/CMakeLists.txt
+ 	cd $(DOWNLOADS)/sdl2; \
+ 	mkdir cmakebuild; cd cmakebuild; \
+-	$(CMAKE) -DBUILD_SHARED_LIBS=no -DSDL_DBUS=yes
++	$(CMAKE) -DBUILD_SHARED_LIBS=no \
++	-DSDL_DBUS=no \
++	-DSDL_KMSDRM=ON -DSDL_KMSDRM_SHARED=ON \
++	-DSDL_ALSA=ON -DSDL_ALSA_SHARED=ON
+ 
+ $(DOWNLOADS)/sdl2/CMakeLists.txt:
+ 	$(CLONE) $(GITHUB)/mkxp-z/SDL $(DOWNLOADS)/sdl2 -b mkxp-z-2.28.1
+@@ -232,8 +235,10 @@ $(DOWNLOADS)/sdl2_image/cmakebuild/Makefile: $(DOWNLOADS)/sdl2_image/CMakeLists.
+ 	-DSDL2IMAGE_PNG_SAVE=yes \
+ 	-DSDL2IMAGE_PNG_SHARED=no \
+ 	-DSDL2IMAGE_JPG_SHARED=no \
+-	-DSDL2IMAGE_JXL=yes \
+-	-DSDL2IMAGE_JXL_SHARED=no \
++	-DSDL2IMAGE_JXL=no \
++	-DSDL2IMAGE_AVIF=no \
++	-DSDL2IMAGE_WEBP=no \
++	-DSDL2IMAGE_TIF=no \
+ 	-DSDL2IMAGE_VENDORED=yes
+ 
+ $(DOWNLOADS)/sdl2_image/CMakeLists.txt:
+@@ -311,7 +316,7 @@ $(LIBDIR)/libfluidsynth.a: $(DOWNLOADS)/fluidsynth/cmakebuild/Makefile
+ 
+ $(DOWNLOADS)/fluidsynth/cmakebuild/Makefile: $(DOWNLOADS)/fluidsynth/CMakeLists.txt
+ 	cd $(DOWNLOADS)/fluidsynth; mkdir cmakebuild; cd cmakebuild; \
+-	$(CMAKE) -DBUILD_SHARED_LIBS=no -Denable-sdl3=no -Denable-readline=no -Dosal=embedded -Denable-libinstpatch=no -Denable-jack=no -Denable-portaudio=no -Denable-libsndfile=no -Denable-systemd=no -Denable-dbus=no
++	$(CMAKE) -DBUILD_SHARED_LIBS=no -Denable-sdl3=no -Denable-readline=no -Dosal=embedded -Denable-libinstpatch=no -Denable-jack=no -Denable-portaudio=no -Denable-libsndfile=no -Denable-systemd=no -Denable-dbus=no -Denable-alsa=no -Denable-oss=no -Denable-pulseaudio=no
+ 
+ $(DOWNLOADS)/fluidsynth/CMakeLists.txt:
+ 	$(CLONE) $(GITHUB)/FluidSynth/fluidsynth -b v2.5.0 --recurse-submodules $(DOWNLOADS)/fluidsynth
+@@ -363,5 +368,5 @@ powerwash: clean-downloads
+ clean-downloads:
+ 	-rm -rf downloads
+ 
+-deps-core: libtheora libvorbis pixman libpng physfs sdl2 sdl2image sdlsound sdl2ttf openal openssl fluidsynth uchardet iconv
++deps-core: libtheora libvorbis pixman libpng physfs sdl2 sdl2image sdlsound sdl2ttf openal openssl fluidsynth uchardet
+ everything: deps-core ruby
+diff --git a/meson.build b/meson.build
+index 17bb062..22f26f2 100644
+--- a/meson.build
++++ b/meson.build
+@@ -68,11 +68,31 @@ gfx_backend = get_option('gfx_backend')
+ if gfx_backend == 'gles'
+     # Needs to be manually set up for now
+     global_args += '-DGLES2_HEADER'
++    # No system Khronos GLES2/EGL headers exist in this cross sysroot, so use
++    # the fallback copies SDL2 bundles for exactly this situation.
++    global_args += '-DSDL_USE_BUILTIN_OPENGL_DEFINITIONS'
+ elif gfx_backend == 'gl'
+     global_dependencies += dependency('gl')
+     # boop
+ endif
+ 
++# Our own libstdc++/libgomp/libgcc_s ship next to the binary in case the
++# console's are older than what this C++14 build needs. A plain rpath is
++# enough and, unlike a --dynamic-linker override, leaves the device's own
++# libc/libpthread untouched so its GPU drivers still dlopen correctly.
++if host_system == 'linux'
++    global_link_args += [
++        '-Wl,-rpath,/roms/ports/mkxp',
++        # --as-needed drops DT_NEEDED entries for libraries no symbol is
++        # actually resolved from. Without it the link line's -lasound leaves a
++        # hard runtime dependency on the console having libasound.so.2, even
++        # though OpenAL Soft only ever dlopen()s it. With it, a console lacking
++        # ALSA still starts the engine and the launcher's silent-audio fallback
++        # can take over, instead of the binary refusing to load at all.
++        '-Wl,--as-needed',
++    ]
++endif
++
+ # ====================
+ # Main source
+ # ====================
+diff --git a/src/meson.build b/src/meson.build
+index 4ce97ae..d408eda 100755
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1,182 +1,182 @@
+-physfs = dependency('physfs', version: '>=2.1', static: build_static)
+-openal = dependency('openal', static: build_static, method: 'pkg-config')
+-theora = dependency('theora', static: build_static)
+-vorbisfile = dependency('vorbisfile', static: build_static)
+-vorbis = dependency('vorbis', static: build_static)
+-ogg = dependency('ogg', static: build_static)
+-sdl2 = dependency('SDL2', static: build_static)
+-sdl_sound = compilers['cpp'].find_library('SDL2_sound')
+-sdl2_ttf = dependency('SDL2_ttf', static: build_static)
+-freetype = dependency('freetype2', static: build_static)
+-pixman = dependency('pixman-1', static: build_static)
+-png = dependency('libpng', static: build_static)
+-zlib = dependency('zlib', static: build_static)
+-uchardet = dependency('uchardet', static: build_static)
+-
+-# As no pkg-config file is generated for static sdl2_image, and pkg-config is
+-# the default option for meson detecting dependencies, pkg-config will fail to
+-# find sdl2_image.pc in the build's lib/pkgconfig folder and instead pull it
+-# from the locally installed packages if it exists.
+-# To work around this, we first check to see if cmake can find our sdl2_image
+-# sub project and use that, then check using pkg-config as normal if we are not
+-# building the sub project.
+-# It looks like upstream SDL_image fixed this for SDL3, so we can hopefully
+-# remove this workaround after eventually upgrading to SDL3.
+-sdl2_image = dependency('SDL2_image', modules: ['SDL2_image::SDL2_image-static', 'SDL2_image::brotlidec-static', 'SDL2_image::brotlicommon-static', 'SDL2_image::hwy', 'SDL2_image::jxl_dec-static'], static: build_static, method: 'cmake', required: false)
+-if sdl2_image.found() == false
+-    sdl2_image = dependency('SDL2_image', modules: ['SDL2_image::SDL2_image-static', 'SDL2_image::brotlidec-static', 'SDL2_image::brotlicommon-static', 'SDL2_image::hwy', 'SDL2_image::jxl_dec-static'], static: build_static)
+-endif
+-
+-if host_system == 'windows'
+-    bz2 = dependency('bzip2', static: build_static)
+-    iconv = compilers['cpp'].find_library('iconv', static: build_static)
+-else
+-    bz2 = compilers['cpp'].find_library('bz2')
+-    # FIXME: Specifically asking for static doesn't work if iconv isn't
+-    # installed in the system prefix somewhere
+-    iconv = compilers['cpp'].find_library('iconv')
+-    global_dependencies += compilers['cpp'].find_library('charset')
+-endif
+-
+-# If OpenSSL is present, you get HTTPS support
+-if get_option('enable-https') == true
+-    openssl = dependency('openssl', required: false, static: build_static)
+-    if openssl.found() == true
+-        global_dependencies += openssl
+-        global_args += '-DMKXPZ_SSL'
+-        if host_system == 'windows'
+-            global_link_args += '-lcrypt32'
+-        endif
+-    else
+-        warning('Could not locate OpenSSL. HTTPS will be disabled.')
+-    endif
+-endif
+-
+-# Windows needs to be treated like a special needs child here
+-explicit_libs = ''
+-if host_system == 'windows'
+-    # Newer versions of Ruby will refuse to link without these
+-    explicit_libs += 'libmsvcrt;libgcc;libmingwex;libgmp;'
+-endif
+-if build_static == true
+-    if host_system == 'windows'
+-        # '-static-libgcc', '-static-libstdc++' are here to avoid needing to ship a separate libgcc_s_seh-1.dll on Windows; it still works without those flags if you have the dll.
+-        global_link_args += ['-static-libgcc', '-static-libstdc++', '-Wl,-Bstatic', '-lgcc', '-lstdc++', '-lpthread', '-Wl,-Bdynamic']
+-    else
+-        global_link_args += ['-static-libgcc', '-static-libstdc++']
+-    endif
+-    global_args += '-DAL_LIBTYPE_STATIC'
+-endif
+-
+-foreach l : explicit_libs.split(';')
+-        if l != ''
+-            global_link_args += '-l:' + l + '.a'
+-        endif
+-endforeach
+-
+-alcdev_struct = 'ALCdevice_struct'
+-if openal.type_name() == 'pkgconfig'
+-    if openal.version().version_compare('>=1.20.1')
+-        alcdev_struct = 'ALCdevice'
+-    endif
+-endif
+-
+-global_args += '-DMKXPZ_ALCDEVICE=' + alcdev_struct
+-
+-
+-global_include_dirs += include_directories('.',
+-    'audio',
+-    'crypto',
+-    'display', 'display/gl', 'display/libnsgif', 'display/libnsgif/utils',
+-    'etc',
+-    'filesystem', 'filesystem/ghc',
+-    'input',
+-    'net',
+-    'system',
+-    'util', 'util/sigslot', 'util/sigslot/adapter'
+-)
+-
+-global_dependencies += [openal, zlib, bz2, sdl2, sdl_sound, pixman, physfs, theora, vorbisfile, vorbis, ogg, sdl2_ttf, freetype, sdl2_image, png, iconv, uchardet]
+-if host_system == 'windows'
+-    global_dependencies += compilers['cpp'].find_library('wsock32')
+-endif
+-
+-if get_option('shared_fluid') == true
+-    fluidsynth = dependency('fluidsynth', static: build_static)
+-    add_project_arguments('-DSHARED_FLUID', language: 'cpp')
+-    global_dependencies += fluidsynth
+-    if host_system == 'windows'
+-        global_dependencies += compilers['cpp'].find_library('dsound')
+-    endif
+-endif
+-
+-if get_option('cjk_fallback_font') == true
+-    add_project_arguments('-DMKXPZ_CJK_FONT', language: 'cpp')
+-endif
+-
+-main_source = files(
+-    'main.cpp',
+-    'config.cpp',
+-    'eventthread.cpp',
+-    'settingsmenu.cpp',
+-    'sharedstate.cpp',
+-    
+-    'audio/alstream.cpp',
+-    'audio/audio.cpp',
+-    'audio/audiostream.cpp',
+-    'audio/fluid-fun.cpp',
+-    'audio/midisource.cpp',
+-    'audio/sdlsoundsource.cpp',
+-    'audio/soundemitter.cpp',
+-    'audio/vorbissource.cpp',
+-    'theoraplay/theoraplay.c',
+-
+-    'crypto/rgssad.cpp',
+-
+-    'display/autotiles.cpp',
+-    'display/autotilesvx.cpp',
+-    'display/bitmap.cpp',
+-    'display/font.cpp',
+-    'display/graphics.cpp',
+-    'display/plane.cpp',
+-    'display/sprite.cpp',
+-    'display/tilemap.cpp',
+-    'display/tilemapvx.cpp',
+-    'display/viewport.cpp',
+-    'display/window.cpp',
+-    'display/windowvx.cpp',
+-
+-    'display/libnsgif/libnsgif.c',
+-    'display/libnsgif/lzw.c',
+-
+-    'display/gl/gl-debug.cpp',
+-    'display/gl/gl-fun.cpp',
+-    'display/gl/gl-meta.cpp',
+-    'display/gl/glstate.cpp',
+-    'display/gl/scene.cpp',
+-    'display/gl/shader.cpp',
+-    'display/gl/texpool.cpp',
+-    'display/gl/tileatlas.cpp',
+-    'display/gl/tileatlasvx.cpp',
+-    'display/gl/tilequad.cpp',
+-    'display/gl/vertex.cpp',
+-
+-    'util/iniconfig.cpp',
+-    'util/win-consoleutils.cpp',
+-    
+-    'etc/etc.cpp',
+-    'etc/table.cpp',
+-
+-    'filesystem/filesystem.cpp',
+-    'filesystem/filesystemImpl.cpp',
+-    
+-    'input/input.cpp',
+-    'input/keybindings.cpp',
+-
+-    'net/LUrlParser.cpp',
+-    'net/net.cpp',
+-
+-    'system/systemImpl.cpp'
+-)
+-
+-global_sources += main_source
++physfs = dependency('physfs', version: '>=2.1', static: build_static)
++openal = dependency('openal', static: build_static, method: 'pkg-config')
++theora = dependency('theora', static: build_static)
++vorbisfile = dependency('vorbisfile', static: build_static)
++vorbis = dependency('vorbis', static: build_static)
++ogg = dependency('ogg', static: build_static)
++sdl2 = dependency('SDL2', static: build_static)
++sdl_sound = compilers['cpp'].find_library('SDL2_sound')
++sdl2_ttf = dependency('SDL2_ttf', static: build_static)
++freetype = dependency('freetype2', static: build_static)
++pixman = dependency('pixman-1', static: build_static)
++png = dependency('libpng', static: build_static)
++zlib = dependency('zlib', static: build_static)
++uchardet = dependency('uchardet', static: build_static)
++
++# As no pkg-config file is generated for static sdl2_image, and pkg-config is
++# the default option for meson detecting dependencies, pkg-config will fail to
++# find sdl2_image.pc in the build's lib/pkgconfig folder and instead pull it
++# from the locally installed packages if it exists.
++# To work around this, we first check to see if cmake can find our sdl2_image
++# sub project and use that, then check using pkg-config as normal if we are not
++# building the sub project.
++# It looks like upstream SDL_image fixed this for SDL3, so we can hopefully
++# remove this workaround after eventually upgrading to SDL3.
++sdl2_image = dependency('SDL2_image', modules: ['SDL2_image::SDL2_image-static'], static: build_static, method: 'cmake', required: false)
++if sdl2_image.found() == false
++    sdl2_image = dependency('SDL2_image', modules: ['SDL2_image::SDL2_image-static'], static: build_static)
++endif
++
++if host_system == 'windows'
++    bz2 = dependency('bzip2', static: build_static)
++    iconv = compilers['cpp'].find_library('iconv', static: build_static)
++else
++    bz2 = compilers['cpp'].find_library('bz2')
++    # On a glibc target, iconv_open/iconv/iconv_close come straight from libc,
++    # so there is no separate -liconv/-lcharset to link (and GNU libiconv is
++    # not obtainable here anyway). mkxp-z only calls those three functions.
++    iconv = declare_dependency()
++endif
++
++# If OpenSSL is present, you get HTTPS support
++if get_option('enable-https') == true
++    openssl = dependency('openssl', required: false, static: build_static)
++    if openssl.found() == true
++        global_dependencies += openssl
++        global_args += '-DMKXPZ_SSL'
++        if host_system == 'windows'
++            global_link_args += '-lcrypt32'
++        endif
++    else
++        warning('Could not locate OpenSSL. HTTPS will be disabled.')
++    endif
++endif
++
++# Windows needs to be treated like a special needs child here
++explicit_libs = ''
++if host_system == 'windows'
++    # Newer versions of Ruby will refuse to link without these
++    explicit_libs += 'libmsvcrt;libgcc;libmingwex;libgmp;'
++endif
++if build_static == true
++    if host_system == 'windows'
++        # '-static-libgcc', '-static-libstdc++' are here to avoid needing to ship a separate libgcc_s_seh-1.dll on Windows; it still works without those flags if you have the dll.
++        global_link_args += ['-static-libgcc', '-static-libstdc++', '-Wl,-Bstatic', '-lgcc', '-lstdc++', '-lpthread', '-Wl,-Bdynamic']
++    else
++        global_link_args += ['-static-libgcc', '-static-libstdc++']
++    endif
++    global_args += '-DAL_LIBTYPE_STATIC'
++endif
++
++foreach l : explicit_libs.split(';')
++        if l != ''
++            global_link_args += '-l:' + l + '.a'
++        endif
++endforeach
++
++alcdev_struct = 'ALCdevice_struct'
++if openal.type_name() == 'pkgconfig'
++    if openal.version().version_compare('>=1.20.1')
++        alcdev_struct = 'ALCdevice'
++    endif
++endif
++
++global_args += '-DMKXPZ_ALCDEVICE=' + alcdev_struct
++
++
++global_include_dirs += include_directories('.',
++    'audio',
++    'crypto',
++    'display', 'display/gl', 'display/libnsgif', 'display/libnsgif/utils',
++    'etc',
++    'filesystem', 'filesystem/ghc',
++    'input',
++    'net',
++    'system',
++    'util', 'util/sigslot', 'util/sigslot/adapter'
++)
++
++global_dependencies += [openal, zlib, bz2, sdl2, sdl_sound, pixman, physfs, theora, vorbisfile, vorbis, ogg, sdl2_ttf, freetype, sdl2_image, png, iconv, uchardet]
++if host_system == 'windows'
++    global_dependencies += compilers['cpp'].find_library('wsock32')
++endif
++
++if get_option('shared_fluid') == true
++    fluidsynth = dependency('fluidsynth', static: build_static)
++    add_project_arguments('-DSHARED_FLUID', language: 'cpp')
++    global_dependencies += fluidsynth
++    if host_system == 'windows'
++        global_dependencies += compilers['cpp'].find_library('dsound')
++    endif
++endif
++
++if get_option('cjk_fallback_font') == true
++    add_project_arguments('-DMKXPZ_CJK_FONT', language: 'cpp')
++endif
++
++main_source = files(
++    'main.cpp',
++    'config.cpp',
++    'eventthread.cpp',
++    'settingsmenu.cpp',
++    'sharedstate.cpp',
++    
++    'audio/alstream.cpp',
++    'audio/audio.cpp',
++    'audio/audiostream.cpp',
++    'audio/fluid-fun.cpp',
++    'audio/midisource.cpp',
++    'audio/sdlsoundsource.cpp',
++    'audio/soundemitter.cpp',
++    'audio/vorbissource.cpp',
++    'theoraplay/theoraplay.c',
++
++    'crypto/rgssad.cpp',
++
++    'display/autotiles.cpp',
++    'display/autotilesvx.cpp',
++    'display/bitmap.cpp',
++    'display/font.cpp',
++    'display/graphics.cpp',
++    'display/plane.cpp',
++    'display/sprite.cpp',
++    'display/tilemap.cpp',
++    'display/tilemapvx.cpp',
++    'display/viewport.cpp',
++    'display/window.cpp',
++    'display/windowvx.cpp',
++
++    'display/libnsgif/libnsgif.c',
++    'display/libnsgif/lzw.c',
++
++    'display/gl/gl-debug.cpp',
++    'display/gl/gl-fun.cpp',
++    'display/gl/gl-meta.cpp',
++    'display/gl/glstate.cpp',
++    'display/gl/scene.cpp',
++    'display/gl/shader.cpp',
++    'display/gl/texpool.cpp',
++    'display/gl/tileatlas.cpp',
++    'display/gl/tileatlasvx.cpp',
++    'display/gl/tilequad.cpp',
++    'display/gl/vertex.cpp',
++
++    'util/iniconfig.cpp',
++    'util/win-consoleutils.cpp',
++    
++    'etc/etc.cpp',
++    'etc/table.cpp',
++
++    'filesystem/filesystem.cpp',
++    'filesystem/filesystemImpl.cpp',
++    
++    'input/input.cpp',
++    'input/keybindings.cpp',
++
++    'net/LUrlParser.cpp',
++    'net/net.cpp',
++
++    'system/systemImpl.cpp'
++)
++
++global_sources += main_source
