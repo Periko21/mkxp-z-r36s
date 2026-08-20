@@ -1,0 +1,4 @@
+# Build output; publish the zip as a GitHub Release asset instead of committing it.
+*.zip
+build-*/
+downloads/
