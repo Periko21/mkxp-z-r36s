@@ -132,6 +132,147 @@ close a 5× gap.
 
 ---
 
+## Controlling the in-game day/night cycle
+
+Pokémon Essentials decides whether it is day or night by reading `Time.now.hour`
+— the system clock. On the R36S that has an awkward consequence: the console has
+**no battery-backed RTC**, so with Wi-Fi off it boots to the same fixed date
+every single time. The day/night cycle is effectively frozen at whatever hour
+that default happens to be, and night-only encounters and evolutions stay
+unreachable without anyone working out why.
+
+`tools/` holds three ArkOS ports that set the console clock, so you can pick the
+time of day before launching the game:
+
+| File | What it does |
+|---|---|
+| `CambiarHora.sh` | On-screen menu: night / day / dawn / dusk / small-hours presets, exact time, date, and re-enabling network sync |
+| `Hora-Noche.sh` | Sets the clock to 22:00 and exits |
+| `Hora-Dia.sh` | Sets the clock to 12:00 and exits |
+
+Copy them to the root of `/roms/ports` and restart EmulationStation; they appear
+in the Ports menu. Run one, then launch the game. The on-screen text is in
+Spanish — it is a handful of `dialog` calls, easy to translate.
+
+Two details that are easy to get wrong:
+
+- **Network time sync has to go off first.** With Wi-Fi on, `systemd-timesyncd`
+  puts the real time back within seconds and the script looks broken.
+  `CambiarHora.sh` runs `timedatectl set-ntp false` before touching the clock,
+  and has a menu entry to turn it back on.
+- **`hwclock --systohc` does nothing on this hardware.** There is no RTC to
+  write to, so the clock resets on every boot. Setting it is a per-session step,
+  not a one-off.
+
+`CambiarHora.sh` follows the standard ArkOS script pattern
+(`/opt/inttools/gptokeyb` for gamepad input, `dialog` for the menu) rather than
+PortMaster, which this console has no reason to have installed. The two preset
+scripts depend on neither and exist as a fallback for when `dialog` or
+`gptokeyb` is missing.
+
+In Essentials v19 night runs 20:00–05:00 and day 10:00–17:00. Individual games
+may move those boundaries, but 22:00 and 12:00 land in the right period either
+way.
+
+> There is a second approach: the launcher can export a fake POSIX timezone
+> (`TZ=GAME±hh:mm`) so that *only the game process* sees a shifted clock. It
+> leaves the console clock alone and network sync cannot undo it. The Fire Ash
+> launcher does not do this; the [Infinite Fusion launcher](#a-second-game-pok%C3%A9mon-infinite-fusion)
+> does, if you drop a `hora.txt` containing e.g. `22:00` into its folder.
+> **Do not combine it with the clock scripts** — the two offsets add up.
+
+---
+
+## A second game: Pokémon Infinite Fusion
+
+The same engine binary also runs **Pokémon Infinite Fusion** (6.8.x) — with the
+**complete** art set, including the hand-drawn fusion sprites. PortMaster
+declined this game because it "requires mkxp-z which we don't have running";
+this is that.
+
+It is installed **in parallel** to the first game, so neither can break the
+other:
+
+```
+/roms/ports/PokemonInfiniteFusion.sh     <- infinite-fusion/PokemonInfiniteFusion.sh
+/roms/ports/mkxp-fusion/                 <- same files as mkxp/ (engine, libs,
+                                            mkxp.json, exitwatch) + your copy
+                                            of the game
+```
+
+Delete the game's `.git` folder (~2 GB of updater packs) before copying — it
+does nothing on the console.
+
+### Memory was the real problem: zram
+
+The console has no swap. Infinite Fusion's sprite sheets are huge (the
+`spritesheets_custom` sheets are 1920×2784, ~20 MB each decoded), and when RAM
+ran out the kernel killed the game silently — the log just stopped mid-line.
+
+The launcher sets up **512 MB of compressed swap in RAM (zram)** before starting
+the engine:
+
+- ArkOS does not run ports as root, so it goes through `sudo -n`. If sudo would
+  ask for a password it gives up in milliseconds and the game starts without
+  zram instead of hanging.
+- It asks for `lz4`; this kernel does not offer it, so the kernel default
+  (`lzo`) is what actually runs. `vm.swappiness=100`, `vm.page-cluster=0`.
+- It only tears down zram on exit if it was the one that set it up, and it
+  leaves any pre-existing swap alone.
+- An empty `sin-zram.txt` in the game folder disables it, for comparisons.
+
+Measured over a full session with every sprite folder in place:
+
+| | |
+|---|---|
+| Real compression ratio | 2.75 : 1 (79 MB of data in 29 MB of RAM) |
+| Swap used, peak | 99 MB of 511 |
+| Process RSS, peak | 761 MB |
+| Free memory, minimum | 68 MB |
+| Kernel OOM kills | none |
+| Frame rate | 32.8 fps average, locked at 40 about half the time |
+
+Without the custom sprite sheets the average was 35.7 fps — the full art costs
+about 3 fps. If memory kills ever come back, raising `ZRAM_MB` is the first
+lever.
+
+### In-game options that matter
+
+| Option | Value | Why |
+|---|---|---|
+| Download data | **Off** | With no network each attempt can only fail, and blocks until it times out |
+| Text entry | **Cursor** | "Keyboard" waits for a physical keyboard and stalls character creation |
+| Device | **Mobile** | Matches what the console is: no keyboard, no mouse, no network |
+
+### What else the launcher does
+
+- **Post-mortem.** When the engine exits, the launcher appends to `mkxp-log.txt`
+  the exit code decoded (0 clean, 137 killed, 139 segfault, 143 SELECT+START),
+  whether `exitwatch` intervened, zram `mm_stat`, free memory and any OOM lines
+  from the kernel. Without it an OOM kill and a forced quit look identical.
+- **Save quarantine.** Before launch, any 0-byte `*.rxdata` / `*.dat` outside
+  `Data/` (the result of cutting power mid-write) is *moved* — never deleted — to
+  `saves-corruptas/`, so a broken save cannot stop the game from booting. Moves
+  are logged to `guardados-apartados.txt`.
+- **`debug.txt`** enables verbose SDL logging and 5-second sampling (now
+  including swap used and RSS) into `perf-log.txt`, same as the Fire Ash
+  launcher.
+- **`hora.txt`** — per-game fake time, see the day/night section above.
+
+### Testing notes
+
+- **Power-cycle the console between test runs.** Mali GPU memory left behind by
+  a SIGKILLed process survives the process and accumulates; comparing two runs
+  without a reboot gives false numbers. (That is how the sprite folders were
+  wrongly blamed for crashes that were really a lack of swap.)
+- Initial load takes 45–85 s: that is Ruby reading and deserialising ~100 MB of
+  `.dat` files from the SD card.
+- **Known issue:** confirm/cancel feel swapped compared with Fire Ash (A cancels,
+  B confirms). It is the same binary, so this comes from the game, not the
+  engine.
+
+---
+
 ## The problems that had to be solved
 
 Cross-compiling for this device is not just a matter of pointing a compiler at
