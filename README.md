@@ -1,5 +1,7 @@
 # mkxp-z for the R36S (ArkOS / RK3326)
 
+Play **Pokémon Fire Ash** and **Pokémon Infinite Fusion** natively on the R36S — no streaming, no PC.
+
 A working native build of the [mkxp-z](https://github.com/mkxp-z/mkxp-z) RPG Maker
 XP/VX/VX Ace engine for the **R36S** handheld running **ArkOS**, plus the complete,
 reproducible cross-compilation setup used to produce it.
